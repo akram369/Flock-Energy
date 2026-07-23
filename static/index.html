@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Urja Meter Ops 2.0 - Management Dashboard</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Custom Styles -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header">
+            <div class="logo-area">
+                <span class="pulse-icon"></span>
+                <h1>Urja Meter Ops <span class="version-badge">v2.0</span></h1>
+            </div>
+            <div class="header-actions" style="display: flex; align-items: center; gap: 1rem;">
+                <button id="theme-toggle" class="btn-theme" title="Toggle Light/Dark Theme">🌓 Theme</button>
+                <div class="sync-status">
+                    <span class="status-label">Legacy Portal:</span>
+                    <span id="sync-time" class="status-value">Loading...</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Body Grid -->
+        <div class="app-body">
+            <!-- Sidebar: Network Hierarchy -->
+            <aside class="sidebar">
+                <div class="sidebar-header">
+                    <h2>Network Hierarchy</h2>
+                    <span class="subtitle">Grid Node Explorer</span>
+                </div>
+                <div class="hierarchy-container" id="hierarchy-tree">
+                    <div class="loading-spinner">Loading network tree...</div>
+                </div>
+            </aside>
+
+            <!-- Main Panel -->
+            <main class="main-content">
+                <!-- Stats Section -->
+                <section class="stats-grid">
+                    <div class="stat-card total-meters">
+                        <div class="stat-info">
+                            <span class="stat-title">Total Meters</span>
+                            <span id="stat-total-meters" class="stat-num">0</span>
+                        </div>
+                        <div class="stat-icon">⚡</div>
+                    </div>
+                    <div class="stat-card active-meters">
+                        <div class="stat-info">
+                            <span class="stat-title">Active</span>
+                            <span id="stat-active-meters" class="stat-num text-success">0</span>
+                        </div>
+                        <div class="stat-icon">🟢</div>
+                    </div>
+                    <div class="stat-card decommissioned-meters">
+                        <div class="stat-info">
+                            <span class="stat-title">Decommissioned</span>
+                            <span id="stat-decom-meters" class="stat-num text-warning">0</span>
+                        </div>
+                        <div class="stat-icon">🔴</div>
+                    </div>
+                    <div class="stat-card total-transformers">
+                        <div class="stat-info">
+                            <span class="stat-title">Transformers</span>
+                            <span id="stat-transformers" class="stat-num text-info">0</span>
+                        </div>
+                        <div class="stat-icon">🔌</div>
+                    </div>
+                </section>
+
+                <!-- Dynamic Workspace: Shows List or Detail -->
+                <div class="workspace-grid">
+                    <!-- Left Column: Search & List Table -->
+                    <div class="workspace-card meters-list-card">
+                        <div class="card-header">
+                            <h3>Smart Meter Inventory</h3>
+                            <div class="filters-row">
+                                <input type="text" id="search-input" placeholder="Search ID or Serial...">
+                                <select id="status-filter">
+                                    <option value="">All Statuses</option>
+                                    <option value="Active">Active</option>
+                                    <option value="Decommissioned">Decommissioned</option>
+                                    <option value="Suspended">Suspended</option>
+                                </select>
+                                <select id="make-filter">
+                                    <option value="">All Makes</option>
+                                    <option value="HPL">HPL</option>
+                                    <option value="Genus">Genus</option>
+                                    <option value="Secure">Secure</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="table-container">
+                            <table id="meters-table">
+                                <thead>
+                                    <tr>
+                                        <th>Meter ID</th>
+                                        <th>Serial Number</th>
+                                        <th>Make</th>
+                                        <th>Phase</th>
+                                        <th>Status</th>
+                                        <th>DT</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="meters-table-body">
+                                    <tr>
+                                        <td colspan="6" class="td-loading">Loading meters list...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="pagination-footer">
+                            <button id="btn-prev" class="btn-nav" disabled>Previous</button>
+                            <span id="pagination-info">Page 1 of 1</span>
+                            <button id="btn-next" class="btn-nav" disabled>Next</button>
+                        </div>
+                    </div>
+
+                    <!-- Right Column: Detail Pane -->
+                    <div class="workspace-card details-card" id="details-pane">
+                        <div class="no-selection-view">
+                            <div class="no-selection-illustration">📊</div>
+                            <h3>No Meter Selected</h3>
+                            <p>Select a meter from the hierarchy tree or list table to inspect details and timeseries readings.</p>
+                        </div>
+                        <div class="detail-view hidden" id="meter-detail-content">
+                            <!-- Detail Header -->
+                            <div class="detail-header">
+                                <div class="detail-title-block">
+                                    <span class="detail-badge" id="detail-badge-status">Active</span>
+                                    <h3 id="detail-title-id">Meter ID</h3>
+                                </div>
+                                <button id="btn-close-detail" class="btn-close">×</button>
+                            </div>
+
+                            <!-- Detail Content Grid -->
+                            <div class="detail-tabs">
+                                <button class="tab-btn active" data-tab="tab-nameplate">Nameplate & Geo</button>
+                                <button class="tab-btn" data-tab="tab-consumption" id="tab-btn-consumption">Consumption History</button>
+                            </div>
+
+                            <!-- Tab 1: Nameplate & Geo -->
+                            <div class="tab-content" id="tab-nameplate">
+                                <div class="info-grid">
+                                    <div class="info-group">
+                                        <label>Serial Number</label>
+                                        <span id="detail-serial">—</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <label>Manufacturer (Make)</label>
+                                        <span id="detail-make">—</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <label>Phase Type</label>
+                                        <span id="detail-phase">—</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <label>Installation Type</label>
+                                        <span id="detail-install-type">—</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <label>Build Version</label>
+                                        <span id="detail-build">—</span>
+                                    </div>
+                                    <div class="info-group">
+                                        <label>DT Code</label>
+                                        <span id="detail-dt-code">—</span>
+                                    </div>
+                                </div>
+
+                                <div class="geo-panel">
+                                    <h4>Geographic Location</h4>
+                                    <div class="geo-coords">
+                                        <div class="coord-item">
+                                            <span class="coord-lbl">Latitude</span>
+                                            <span id="detail-lat">—</span>
+                                        </div>
+                                        <div class="coord-item">
+                                            <span class="coord-lbl">Longitude</span>
+                                            <span id="detail-lng">—</span>
+                                        </div>
+                                    </div>
+                                    <div class="map-link-container">
+                                        <a id="google-map-link" href="#" target="_blank" class="btn-map">View on Google Maps</a>
+                                    </div>
+                                </div>
+
+                                <div class="hierarchy-path-panel">
+                                    <h4>Grid Attachment Path</h4>
+                                    <ul class="path-list" id="detail-path-list">
+                                        <!-- Path items injected here -->
+                                    </ul>
+                                </div>
+                            </div>
+
+                            <!-- Tab 2: Consumption History -->
+                            <div class="tab-content hidden" id="tab-consumption">
+                                <div class="chart-container">
+                                    <canvas id="consumption-chart"></canvas>
+                                </div>
+                                <div class="chart-container">
+                                    <canvas id="voltage-chart"></canvas>
+                                </div>
+                                <div class="readings-table-wrapper">
+                                    <h4>Raw Energy Log (Last 10 Readings)</h4>
+                                    <table class="readings-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Timestamp</th>
+                                                <th>Active Energy (kWh)</th>
+                                                <th>Apparent Energy (kVAh)</th>
+                                                <th>Voltage (V)</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="readings-table-body">
+                                            <!-- Readings injected here -->
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </main>
+        </div>
+    </div>
+
+    <!-- Main Client Script -->
+    <script src="app.js"></script>
+</body>
+</html>
