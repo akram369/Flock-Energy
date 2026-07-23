@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  urja-api-wrapper:
+    build: .
+    container_name: urja_api_service
+    ports:
+      - "8000:8000"
+    environment:
+      - PORTAL_URL=https://urja-ops.flockenergy.tech
+      - URJA_USERNAME=operator@urja.local
+      - URJA_PASSWORD=urja-ops-2026
+      - CACHE_REFRESH_INTERVAL=300
+      - API_HOST=0.0.0.0
+      - API_PORT=8000
+    restart: unless-stopped
