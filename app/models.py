@@ -1,6 +1,5 @@
 from pydantic import BaseModel, Field
 from typing import List, Optional, Dict, Any
-from datetime import datetime
 
 class GeoLocation(BaseModel):
     latitude: Optional[float] = None
@@ -30,6 +29,22 @@ class MeterResponse(BaseModel):
     dt_code: Optional[str] = Field(None, description="Associated Distribution Transformer code")
     location: Optional[GeoLocation] = Field(None, description="Geo coordinates of the meter")
     hierarchy: Optional[MeterHierarchy] = Field(None, description="Full electrical network parent structure")
+
+class NearbyMeterResponse(BaseModel):
+    meter_id: str
+    serial_number: Optional[str] = None
+    make: Optional[str] = None
+    phase_type: Optional[str] = None
+    status: Optional[str] = None
+    dt_code: Optional[str] = None
+    location: Optional[GeoLocation] = None
+    distance_km: float = Field(..., description="Distance in kilometers from search coordinates")
+
+class NearbyMetersListResponse(BaseModel):
+    origin: Dict[str, float] = Field(..., description="Latitude and longitude coordinates searched")
+    radius_km: float = Field(..., description="Search radius in kilometers")
+    total: int = Field(..., description="Number of meters found within radius")
+    data: List[NearbyMeterResponse]
 
 class TransformerResponse(BaseModel):
     code: str = Field(..., description="Unique identifier of the distribution transformer")
@@ -65,3 +80,56 @@ class AuthLoginResponse(BaseModel):
     success: bool
     session_token: str
     message: str
+
+# Analytics Models
+class MakeBreakdown(BaseModel):
+    make: str
+    count: int
+    percentage: float
+
+class PhaseBreakdown(BaseModel):
+    phase: str
+    count: int
+
+class StatusBreakdown(BaseModel):
+    active: int
+    decommissioned: int
+    suspended: int
+    other: int
+
+class DTLoadItem(BaseModel):
+    dt_code: str
+    dt_name: str
+    meter_count: int
+    capacity_kva: Optional[float] = None
+
+class AnomaliesSummary(BaseModel):
+    missing_geo_count: int
+    unlinked_dt_count: int
+    inactive_meter_count: int
+
+class AnalyticsSummaryResponse(BaseModel):
+    total_meters: int
+    total_transformers: int
+    status_breakdown: StatusBreakdown
+    make_breakdown: List[MakeBreakdown]
+    phase_breakdown: List[PhaseBreakdown]
+    top_transformers_by_meters: List[DTLoadItem]
+    anomalies: AnomaliesSummary
+    cache_last_updated: float
+
+class HealthCheckResponse(BaseModel):
+    status: str
+    portal_connected: bool
+    cached_meters: int
+    cached_transformers: int
+    cache_age_seconds: float
+    uptime_seconds: float
+    timestamp: str
+
+class CacheRefreshResponse(BaseModel):
+    success: bool
+    message: str
+    meters_count: int
+    transformers_count: int
+    refreshed_at: str

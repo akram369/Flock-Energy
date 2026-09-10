@@ -10,7 +10,8 @@ from app.models import MeterResponse, GeoLocation, MeterHierarchy, HierarchyItem
 class TestUrjaAPIWrapper(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.client = TestClient(app)
+        with patch.object(main_module, "refresh_all_caches", return_value=None):
+            cls.client = TestClient(app)
 
         # Clear and mock global cache variables for deterministic unit tests
         main_module.meters_cache = [
@@ -67,11 +68,27 @@ class TestUrjaAPIWrapper(unittest.TestCase):
         
         main_module.hierarchy_tree = main_module.build_hierarchy_tree(main_module.meters_cache)
 
+    @classmethod
+    def tearDownClass(cls):
+        try:
+            cls.client.close()
+        except Exception:
+            pass
+
     def test_serve_dashboard(self):
         """Test that root route serves the index.html page."""
         response = self.client.get("/")
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response.headers["content-type"])
+
+    def test_health_check(self):
+        """Test the system health check endpoint."""
+        response = self.client.get("/api/v1/health")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn(data["status"], ["healthy", "degraded"])
+        self.assertEqual(data["cached_meters"], 2)
+        self.assertEqual(data["cached_transformers"], 2)
 
     def test_list_meters_all(self):
         """Test listing all cached meters."""
@@ -120,6 +137,26 @@ class TestUrjaAPIWrapper(unittest.TestCase):
         self.assertEqual(response.status_code, 404)
         self.assertIn("not found", response.json()["detail"].lower())
 
+    def test_nearby_meters(self):
+        """Test geo-spatial nearby radius search."""
+        # Query near J100000 coordinates (26.9389, 75.8309) with 2km radius
+        response = self.client.get("/api/v1/meters/nearby?lat=26.9389&lng=75.8309&radius_km=2.0")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["data"][0]["meter_id"], "J100000")
+        self.assertLess(data["data"][0]["distance_km"], 0.5)
+
+    def test_analytics_summary(self):
+        """Test grid-wide operational metrics and anomaly summary."""
+        response = self.client.get("/api/v1/analytics/summary")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["total_meters"], 2)
+        self.assertEqual(data["status_breakdown"]["active"], 1)
+        self.assertEqual(data["status_breakdown"]["decommissioned"], 1)
+        self.assertTrue(len(data["make_breakdown"]) >= 2)
+
     def test_list_transformers(self):
         """Test retrieving transformers list."""
         response = self.client.get("/api/v1/transformers")
@@ -138,10 +175,39 @@ class TestUrjaAPIWrapper(unittest.TestCase):
         self.assertTrue(len(data["children"]) > 0)
         self.assertEqual(data["children"][0]["type"], "zone")
 
+    def test_hierarchy_subtree_success(self):
+        """Test retrieving a sub-tree for a specific grid node code."""
+        response = self.client.get("/api/v1/hierarchy/DT-001")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertEqual(data["code"], "DT-001")
+        self.assertEqual(data["type"], "dt")
+        self.assertTrue(len(data["children"]) >= 1)
+
+    def test_hierarchy_subtree_404(self):
+        """Test non-existent hierarchy node returns 404."""
+        response = self.client.get("/api/v1/hierarchy/NONEXISTENT-CODE")
+        self.assertEqual(response.status_code, 404)
+
+    @patch("app.main.refresh_all_caches")
+    def test_cache_refresh(self, mock_refresh):
+        """Test manual cache invalidation and refresh trigger."""
+        mock_refresh.return_value = None
+        response = self.client.post("/api/v1/cache/refresh")
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["success"])
+
+    def test_scalar_docs(self):
+        """Test that Scalar interactive documentation is served."""
+        response = self.client.get("/scalar")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("text/html", response.headers["content-type"])
+        self.assertIn("api-reference", response.text)
+
     @patch("app.main.portal_client")
     def test_get_consumption(self, mock_portal_client):
         """Test retrieving dynamic energy and voltage readings."""
-        # Setup mock readings from portal
         mock_portal_client.get_meter_energy.return_value = {
             "data": [
                 {"timestamp": "23/06/2026 23:30", "kwh": "48438.74", "kvah": "52313.84", "voltR": "226"},

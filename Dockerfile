@@ -11,9 +11,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend app and static assets
+# Copy backend app, data snapshots, and static assets
 COPY app/ ./app
 COPY static/ ./static
+COPY data/ ./data
 
 # Expose port
 EXPOSE 8000

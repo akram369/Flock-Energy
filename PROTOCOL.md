@@ -1,38 +1,57 @@
 # Urja Meter Ops Portal - Legacy Protocol Documentation
 
-This document describes how the legacy "Urja Meter Ops" web portal (https://urja-ops.flockenergy.tech) operates under the hood, as discovered during reverse-engineering.
+This document describes how the legacy "Urja Meter Ops" web portal (`https://urja-ops.flockenergy.tech`) operates under the hood, as discovered through network inspection and bundle reverse-engineering.
 
 ---
 
-## 1. Authentication & Session Management
+## 1. Authentication & Session Architecture
 
-- **Login Page URL**: `https://urja-ops.flockenergy.tech/login`
-- **Login Method**: `POST`
-- **Content-Type**: `application/x-www-form-urlencoded` or multipart form data.
+The legacy portal is built on **SvelteKit** with server-side form actions and cookie-based session tracking.
+
+- **Login Page**: `https://urja-ops.flockenergy.tech/login`
+- **Method**: `POST`
+- **Form URL**: `/login` (POSTing to `/` returns `HTTP 405 Method Not Allowed`)
+- **Content-Type**: `application/x-www-form-urlencoded`
 - **Payload**:
-  - `email`: User's login email (e.g., `operator@urja.local`).
-  - `password`: User's login password (e.g., `urja-ops-2026`).
-- **Response**: SvelteKit-style JSON redirect descriptor.
+  ```
+  email=operator@urja.local&password=urja-ops-2026
+  ```
+- **Response Format**:
+  SvelteKit responds with an action redirect descriptor:
   ```json
   {"type":"redirect","status":303,"location":"/meters"}
   ```
-- **Session Cookie**: Successful login sets a secure session token cookie:
-  - `__Secure-better-auth.session_token`
-- **CSRF Requirements**:
-  SvelteKit validates the origin of POST requests. Submitting requests requires providing:
+- **Session Cookie**:
+  A successful handshake issues a secure HTTP-only cookie:
+  ```
+  Set-Cookie: __Secure-better-auth.session_token=<token_hash>; Path=/; Secure; HttpOnly; SameSite=Lax
+  ```
+- **CSRF & Origin Protections**:
+  SvelteKit validates inbound POST request origins. Direct HTTP client calls fail unless the following headers are supplied:
   - `Origin: https://urja-ops.flockenergy.tech`
   - `Referer: https://urja-ops.flockenergy.tech/login`
-  - A modern browser `User-Agent`.
+  - A browser `User-Agent` string.
+
+### Sample Authentication via cURL
+```bash
+curl -i -X POST "https://urja-ops.flockenergy.tech/login" \
+  -H "Origin: https://urja-ops.flockenergy.tech" \
+  -H "Referer: https://urja-ops.flockenergy.tech/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "email=operator@urja.local&password=urja-ops-2026" \
+  -c cookies.txt
+```
 
 ---
 
-## 2. API Endpoints
+## 2. Discovered Internal Endpoints
 
-Once authenticated, the frontend client makes async fetch calls to several JSON endpoints.
+Once authenticated with the `__Secure-better-auth.session_token` cookie, the client communicates with internal REST-like endpoints.
 
 ### A. Meter Search & Listing
-- **URL**: `GET /portal/meters/search?q={search_query}&page={page_num}`
-- **Response Format**:
+- **Endpoint**: `GET /portal/meters/search?q={query}&page={page}`
+- **Purpose**: Paginated search across meter serial numbers or meter IDs (20 items/page).
+- **Sample Response**:
   ```json
   {
     "data": [
@@ -48,11 +67,10 @@ Once authenticated, the frontend client makes async fetch calls to several JSON 
     "total": 403
   }
   ```
-- **Behavior**: Paginated by 20 items per page. The query parameter `q` searches across meter serial numbers or IDs.
 
 ### B. Meter Coordinates (Geo)
-- **URL**: `GET /portal/meters/{meterId}/geo`
-- **Response Format**:
+- **Endpoint**: `GET /portal/meters/{meterId}/geo`
+- **Sample Response**:
   ```json
   {
     "data": {
@@ -61,10 +79,12 @@ Once authenticated, the frontend client makes async fetch calls to several JSON 
     }
   }
   ```
+- **Quirk**: Coordinates are formatted as strings rather than numerical floats.
 
-### C. Consumption History (Energy Readings)
-- **URL**: `GET /portal/meters/{meterId}/energy`
-- **Response Format**:
+### C. Consumption Telemetry (Energy & Voltage)
+- **Endpoint**: `GET /portal/meters/{meterId}/energy`
+- **Purpose**: 15-minute / 30-minute interval timeseries log.
+- **Sample Response**:
   ```json
   {
     "data": [
@@ -77,11 +97,13 @@ Once authenticated, the frontend client makes async fetch calls to several JSON 
     ]
   }
   ```
-- **Behavior**: Returns a historical list of 15-minute / 30-minute interval readings containing timestamps, active energy (kWh), apparent energy (kVAh), and voltage.
+- **Anomalies**:
+  - Timestamps use a legacy format (`DD/MM/YYYY HH:MM`).
+  - Values are strings and occasionally contain invalid characters (`"—"`, `"null"`, `"N/A"`).
 
 ### D. Distribution Transformers
-- **URL**: `GET /portal/dts?page={page_num}`
-- **Response Format**:
+- **Endpoint**: `GET /portal/dts?page={page}`
+- **Sample Response**:
   ```json
   {
     "data": [
@@ -96,9 +118,9 @@ Once authenticated, the frontend client makes async fetch calls to several JSON 
   }
   ```
 
-### E. API Security Keys
-- **URL**: `GET /portal/keys`
-- **Response Format**:
+### E. Cryptographic Key Endpoint
+- **Endpoint**: `GET /portal/keys`
+- **Sample Response**:
   ```json
   {
     "data": {
@@ -109,33 +131,70 @@ Once authenticated, the frontend client makes async fetch calls to several JSON 
 
 ---
 
-## 3. The Bulk Export Endpoints & Signature Scheme
+## 3. The Bulk Export Endpoints & HMAC-SHA256 Scheme
 
-To support bulk data exports, the portal features a secure signed export endpoint.
+To prevent unauthorized mass data scraping, the legacy portal protects its bulk export route with an HMAC-SHA256 signature requirement.
 
 - **URL**: `GET /portal/export?page=1`
-- **Headers Required**:
-  - `x-timestamp`: The current epoch timestamp in seconds (as string).
-  - `x-signature`: The HMAC-SHA256 signature verifying the authenticity of the export request.
-  
-### HMAC Signature Generation
-1. Fetch the `signingSecret` from `/portal/keys`.
-2. Construct the message string by joining the HTTP method, request path, query string, and timestamp with a newline `\n`:
+- **Required Headers**:
+  - `x-timestamp`: Unix epoch timestamp in seconds.
+  - `x-signature`: Lowercase hexadecimal HMAC-SHA256 hash.
+
+### Signature Algorithm
+1. Retrieve the `signingSecret` from `GET /portal/keys`.
+2. Construct the canonical message by joining:
    ```
-   METHOD + "\n" + PATH + "\n" + QUERY + "\n" + TIMESTAMP
+   METHOD + "\n" + PATH + "\n" + QUERY_STRING + "\n" + TIMESTAMP
    ```
    *Example*:
    ```
    GET
    /portal/export
    page=1
-   1700000000
+   1719187200
    ```
-3. Hash this message with the `signingSecret` using HMAC-SHA256.
-4. Output the signature as a lowercase hex string.
+3. Calculate the HMAC-SHA256 hash using `signingSecret` as key.
+4. Set headers:
+   - `x-timestamp: 1719187200`
+   - `x-signature: <hex_digest>`
 
-### Response Data Format
-The `/portal/export?page=1` response contains the complete metadata list of all 403 meters in a single JSON payload. It is heavily structured and includes location and full network hierarchy:
+### Python Implementation Snippet
+```python
+import time
+import hmac
+import hashlib
+import httpx
+
+def get_bulk_meters(client: httpx.Client, base_url: str):
+    # 1. Fetch secret
+    key_res = client.get(f"{base_url}/portal/keys")
+    secret = key_res.json()["data"]["signingSecret"]
+
+    # 2. Build canonical string
+    method = "GET"
+    path = "/portal/export"
+    query = "page=1"
+    timestamp = str(int(time.time()))
+    canonical_string = f"{method}\n{path}\n{query}\n{timestamp}"
+
+    # 3. Hash
+    signature = hmac.new(
+        secret.encode("utf-8"),
+        canonical_string.encode("utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+
+    # 4. Request
+    headers = {
+        "x-timestamp": timestamp,
+        "x-signature": signature
+    }
+    res = client.get(f"{base_url}{path}?{query}", headers=headers)
+    return res.json().get("data", [])
+```
+
+### Full Dataset Payload
+The export payload returns **all 403 meters** in a single call, completely nested with full network topology and GPS coordinates:
 ```json
 {
   "total": 403,
@@ -169,9 +228,8 @@ The `/portal/export?page=1` response contains the complete metadata list of all 
 
 ---
 
-## 4. Observations & Quirks
+## 4. Key Observations, Quirks & Pitfalls
 
-- **No CSRF Tokens**: Unlike many SvelteKit apps, the login endpoint does not require a dynamic form token. SvelteKit's standard header checks (specifically the `Origin` header matching the Host) are the primary CSRF guard rails.
-- **SvelteKit Router Redirects**: Accessing `/` returns the login page html, but POSTing to `/` returns a Method Not Allowed error. Login submissions must explicitly go to `/login`.
-- **Stateless Sub-Endpoints**: The sub-endpoints (`/portal/meters/.../geo` and `/portal/meters/.../energy`) are fully structured JSON APIs, bypassing SvelteKit's standard client-side loader serialization format (`__data.json`), which simplifies client building.
-- **Export Bulk Coverage**: Although `/portal/export?page=1` specifies `page=1`, it returns all 403 records at once, providing a clean bulk path.
+1. **Unpaginated Bulk Export**: Despite passing `page=1`, the export endpoint returns all 403 records at once.
+2. **Missing Token Expiry Headers**: The legacy portal does not return `exp` claims in cookies. Session timeout must be detected reactively when requests return `HTTP 401`, `HTTP 405`, or redirect descriptors to `/login`.
+3. **Data Dirtying**: String telemetry values (`"voltR": "226"`, `"kwh": "—"`) require strict defensive parsing before exposure to downstream REST consumers.
